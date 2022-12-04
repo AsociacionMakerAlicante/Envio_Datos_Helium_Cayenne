@@ -1,20 +1,18 @@
 #include <Arduino.h>
-
-#include <pines.h>
 #include <dispositivos.h>
+#include <pines.h>
 #include <adc.h>
+#include <config.h>
 #include <lmic.h>
 #include <hal\hal.h>
 #include <RocketScream_LowPowerAVRZero.h>
 #include <CayenneLPP.h>
 
-#define DEBUG
-
-#define MINUTOS_ENVIO 1 // Cada X minutos realizamos un envío.
-
 unsigned long tiempo;
 int lectura, hora, minutos, segundos, milisegundos;
 volatile byte contador;
+unsigned long inicioCuentaAtras;      // Variable genérica para controlar tiempos en bucles.
+volatile boolean envioEnCurso = true; // Hay un envío en curso, no poner el microcontrolador a dormir.
 
 // Tamaño de los datos enviados a Cayenne.
 // Cada sensor añade al payload 2 bytes + los bytes de sus datos.
@@ -24,18 +22,20 @@ CayenneLPP lpp(4 + 4); // Térmometro + Lectura de batería
 void wakeUp(void);
 void pulsador(void);
 void do_send(osjob_t *j);
+void lecturaDatos();
 
-// Hay un envío en curso, no poner el microcontrolador a dormir.
-volatile boolean envioEnCurso = true;
-
-// Pines del ATmega4808 no utilizados en la aplicación
-// se ponen aquí para reducir el consumo de corriente.
+/*******************************************************
+ * Pines del ATmega4808 no utilizados en la aplicación *
+ * se ponen aquí para reducir el consumo de corriente. *
+ *******************************************************/
 #if defined(DEBUG)
-const uint8_t unusedPins[] = {PIN_PD0, PIN_PD1, PIN_PD2, PIN_PD3, PIN_PD4, PIN_PD5, PIN_PD7, PIN_PA1, PIN_PA2, PIN_PA3};
+// Si estamos en modo debug no deshabilitamos El pin con el led, A3 (para leer la tensión, ni RX2 y TX2 para comunicarnos con el PC)
+const uint8_t unusedPins[] = {PIN_A0, PIN_A3, PIN_A4, PIN_A5, PIN_A7, PIN_PA1, PIN_PA2, PIN_PA3};
 #else
-const uint8_t unusedPins[] = {PIN_PD0, PIN_PD1, PIN_PD2, PIN_PD3, PIN_PD4, PIN_PD5, PIN_PD7, PIN_PA1, PIN_PA2, PIN_PA3, PIN_PF0, PIN_PF1};
+const uint8_t unusedPins[] = {PIN_A0, PIN_A3, PIN_A4, PIN_A5, PIN_A7, PIN_PA0, PIN_PA1, PIN_PA2, PIN_PA3, PIN_PF0, PIN_PF1};
 #endif
 
+// ################# DATOS PLACA PARA CONEXIÓN CON HELIUM ##################
 // Device EUI. Al copiar los datos de la consola de Helium hay que indicarle que lo haga en formato "lsb"
 static const u1_t PROGMEM DEVEUI[8] = {DEVEUI_DISPOSITIVO_01};
 void os_getDevEui(u1_t *buf) { memcpy_P(buf, DEVEUI, 8); }
@@ -47,6 +47,12 @@ void os_getArtEui(u1_t *buf) { memcpy_P(buf, APPEUI, 8); }
 // App Key. Al copiar los datos de la consola de Helium hay que indicarle que lo haga en formato "msb"
 static const u1_t PROGMEM APPKEY[16] = {APPKEY_DISPOSITIVO_01};
 void os_getDevKey(u1_t *buf) { memcpy_P(buf, APPKEY, 16); }
+// ############################################################################
+
+// Datos conversor ADC
+const double tensionReferencia = 1.5, resolucionLectura = 1023;
+// Sensor de temperatura.
+double temperatura, lecturaTMP36, tension;
 
 static osjob_t sendjob;
 
@@ -58,16 +64,6 @@ const lmic_pinmap lmic_pins = {
     .rst = RFM95_RST,
     .dio = {RFM95_DIO0, RFM95_DIO1, LMIC_UNUSED_PIN},
 };
-
-// Imprime información en hexadecimal en el monitor serial al producirse el evento "Joined"
-// (Se ha unido correctamente)
-void printHex2(unsigned v)
-{
-    v &= 0xff;
-    if (v < 16)
-        Serial2.print('0');
-    Serial2.print(v, HEX);
-}
 
 // Función declarada en la libreria lmic. Se ejecuta cada vez que se produce un evento.
 // Aquí podemos poner código de control.
@@ -147,9 +143,7 @@ void onEvent(ev_t ev)
             Serial2.println(F(" bytes of payload"));
         }
 #endif
-        // Programar la próxima transmisión.
-        // os_setTimedCallback(&sendjob, os_getTime()+sec2osticks(TX_INTERVAL), do_send);
-        envioEnCurso = false; // Finaliza el envío.
+        envioEnCurso = false; // Envio completado. El micro puede ponerse a dormir.
         break;
     case EV_LOST_TSYNC:
 #if defined(DEBUG)
@@ -192,12 +186,12 @@ void onEvent(ev_t ev)
         break;
     case EV_JOIN_TXCOMPLETE:
 #if defined(DEBUG)
-        Serial2.println(F("EV_JOIN_TXCOMPLETE: no JoinAccept"));
+        Serial2.println(F("EV_JOIN_TXCOMPLETE: Join no aceptado."));
 #endif
         break;
     default:
 #if defined(DEBUG)
-        Serial2.println(F("Unknown event"));
+        Serial2.println(F("Evento desconocido."));
         Serial2.println((unsigned)ev);
 #endif
         break;
@@ -216,24 +210,46 @@ void do_send(osjob_t *j)
     }
     else
     {
-        // Prepara el envío de datos en el próximo momento posible.
-        // Enviamos los datos en el formato de Cayenne.
+        /* 
+        Prepara el envío de datos en el próximo momento posible.
+        Enviamos los datos en el formato de Cayenne.
+        */
+
+        // Encendemos el termómetro.
+        digitalWrite(TMP36_POWER, HIGH);
+
+        // Esperamos a que se complete el tiempo de encendido.
+        inicioCuentaAtras = millis();
+        while (millis() - inicioCuentaAtras < TMP36_TIEMPO_ENCENDIDO)
+        {
+        }
+
+        // Una ve que ha pasado el tiempo de encendido leemos el valor.
+        lecturaTMP36 = analogRead(TMP36_DATA);
+
+        // Una vez leida la temperatura apagamos el termómetro.
+        digitalWrite(TMP36_POWER, LOW);
+
+        // Ahora convertimos la lectura a voltios.
+        tension = tensionReferencia * lecturaTMP36 / resolucionLectura;
+
+        // Ya tenemos la tensión, ahora la pasamos a grados.
+        temperatura = (tension - TMP36_V_A_0_GRADOS) * 100.0;
+
         lpp.reset();
+        lpp.addAnalogInput(1, temperatura);                       // Añadimos el sensor de temperatura.
         lpp.addAnalogInput(2, ADC_BateriaLeerVoltaje() / 1000.F); // Batería en Voltios.
-        lpp.addAnalogInput(1, 19.1);                              // Añadimos el sensor de temperatura.
         LMIC_setTxData2(1, lpp.getBuffer(), lpp.getSize(), 0);
 #if defined(DEBUG)
-        Serial2.println(F("Packet queued"));
+        Serial2.println(F("Paquete puesto en la cola para su envío"));
 #endif
     }
 }
 
 void setup()
 {
-    // put your setup code here, to run once:
-    // Reduce el consumo de los pines que no se van a usar en el ATmega4808
-    uint8_t index;
-    for (index = 0; index < sizeof(unusedPins); index++)
+    // Desactivamos los pines no usados para ahorrar bateria.
+    for (uint8_t index = 0; index < sizeof(unusedPins); index++)
     {
         pinMode(unusedPins[index], INPUT_PULLUP);
         LowPower.disablePinISC(unusedPins[index]);
@@ -248,12 +264,8 @@ void setup()
 
 #if defined(DEBUG)
     Serial2.begin(115200);
-    Serial2.println(F("Starting"));
+    Serial2.println(F("Iniciando"));
 #endif
-
-    // Inicializamos el ADC.
-    ADC_BateriaInicializarADC();
-    delay(1000); // Espera inicialización ADC
 
     // LMIC init
     os_init();
@@ -278,10 +290,23 @@ void setup()
     // Iniciar un trabajo (el envío también inicia automáticamente OTAA)
     do_send(&sendjob);
 
-    // Configuración de pines.
+
+    /* Utilizando 1.5V como tensión de referencia cubrimos todo el rango de temperaturas 
+       del TMP36 (-50 a 100) grados centigrados.
+       Se puede utilizar como tensión de referencia 1.1V para aumentar la precisión de las
+       medidas. El rango de temperaturas cubierto sería de -50 a 60.
+    */
+    analogReference(INTERNAL1V5);
+
+    // Configuración de pines del TMP36.
+    pinMode(TMP36_POWER, OUTPUT);
+    pinMode(TMP36_DATA, INPUT);
+
+    // Configuración pines de control del temporizador.
+    pinMode(TPL5010_WAKE, INPUT);
+    pinMode(TPL5010_DONE, OUTPUT);
+
     pinMode(LED_BUILTIN, OUTPUT);  // LED
-    pinMode(TPL5010_WAKE, INPUT);  // TPL5010 WAKE
-    pinMode(TPL5010_DONE, OUTPUT); // TPL5010 DONE
 
     // Generamos el pulso de DONE del TPL5010
     // El TPL5010 comienza a funcionar.
@@ -297,14 +322,14 @@ void setup()
 
 void loop()
 {
-    // put your main code here, to run repeatedly:
     // Realiza el envío en curso si lo hay.
     os_runloop_once();
+
     // Ponemos el microcontrolador a dormir.
     if (!envioEnCurso)
     {
 #if defined(DEBUG)
-        Serial2.println(F("Microcontrolador a dormir\n"));
+        Serial2.println(F("Microcontrolador a dormir"));
         delay(500);
 #endif
         // Si el micro se pone a dormir antes de que termine la comunicación
@@ -338,6 +363,12 @@ void wakeUp(void)
     // Generamos la señal de Done para el timer.
     digitalWrite(TPL5010_DONE, HIGH);
     // Añadimos un delay para el tiempo de señal en alto de DONE del TPL5010.
+    /*
+    Pendiente de comprobación. Es un bucle vacio, al compilar lo deberia eliminar el compilador
+    por lo que no tendria ningún efecto.
+    Si el código actual funciona es porque el pulso dura lo suficiente aunque no utilicemos
+    ningún retardo entre el HIGH y el LOW
+    */
     for (char i = 0; i < 5; i++)
     {
     } // Ancho de pulso mínimo 100 ns. 8.5 us con i < 3.
@@ -353,4 +384,37 @@ void wakeUp(void)
         envioEnCurso = true; // Se pone en false cuando se finaliza el envío.
         os_setCallback(&sendjob, do_send);
     }
+}
+
+// Lee la temperatura del termometro y la tensión de la bateria.
+void lecturaDatos()
+{
+    // Encendemos el termómetro.
+    digitalWrite(TMP36_POWER, HIGH);
+
+    // Esperamos a que se complete el tiempo de encendido.
+    inicioCuentaAtras = millis();
+    while (millis() - inicioCuentaAtras < TMP36_TIEMPO_ENCENDIDO)
+    {
+    }
+
+    // Una ve que ha pasado el tiempo de encendido leemos el valor.
+    lecturaTMP36 = analogRead(TMP36_DATA);
+
+    // Una vez leida la temperatura apagamos el termómetro.
+    digitalWrite(TMP36_POWER, LOW);
+
+    // Ahora convertimos la lectura a voltios.
+    tension = tensionReferencia * lecturaTMP36 / resolucionLectura;
+
+    // Ya tenemos la tensión, ahora la pasamos a grados.
+    temperatura = (tension - TMP36_V_A_0_GRADOS) * 100.0;
+
+    // Pasamos los datos a formato Cayenne
+    lpp.reset();
+    lpp.addAnalogInput(1, temperatura);
+    lpp.addAnalogInput(2, ADC_BateriaLeerVoltaje()); // Batería en Voltios.
+    // #if defined(DEBUG)
+    //   grabaRegistro(EV_LECTURADATOS);
+    // #endif
 }

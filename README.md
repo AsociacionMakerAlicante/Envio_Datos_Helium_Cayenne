@@ -14,7 +14,8 @@ Ejemplo:![Ejemplo](https://github.com/AsociacionMakerAlicante/Envio_Datos_Helium
 Si estais interesados en saber mas sobre como se ha diseñado esta placa y su funcionamiento os dejo a continuación tres entradas al blog del socio que diseñó esta placa.
 Es muy instructivo.
 
-1.- [Construir un dispositivo Lora (1 de 3)](http://jmnelectronics.com/archives/12259)<p>
+1.- [Construir un dispositivo Lora (1 de 3)](http://jmnelectronics.com/archives/12259)
+
 2.- [Construir un dispositivo Lora (2 de 3)](http://jmnelectronics.com/archives/12510)
 
 2.- [Construir un dispositivo Lora (3 de 3)](http://jmnelectronics.com/archives/12686)

@@ -10,3 +10,11 @@ En este ejemplo se envian los datos de temperatura, humedad y tensión de la bat
 gráfica con la evolución de las últimas 24 horas de temperautra y humedad. La tensión de la bateria y datos de RSSI y SNR de la transmisión.
 
 Ejemplo:![Ejemplo](https://github.com/AsociacionMakerAlicante/Envio_Datos_Helium_Cayenne/blob/master/test/Grafica%20Cayenne.jpg)
+
+Si estais interesados en saber mas sobre como se ha diseñado esta placa y su funcionamiento os dejo a continuación tres entradas al blog del socio que diseñó esta placa.
+Es muy instructivo.
+1.- [Construir un dispositivo Lora (1 de 3)](http://jmnelectronics.com/archives/12259)
+
+2.- [Construir un dispositivo Lora (2 de 3)](http://jmnelectronics.com/archives/12510)
+
+2.- [Construir un dispositivo Lora (3 de 3)](http://jmnelectronics.com/archives/12686)

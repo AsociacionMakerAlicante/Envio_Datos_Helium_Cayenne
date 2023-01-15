@@ -18,6 +18,4 @@ Es muy instructivo.
 
 2.- [Construir un dispositivo Lora (2 de 3)](http://jmnelectronics.com/archives/12510)
 
-2.- [Construir un dispositivo Lora (3 de 3)](http://jmnelectronics.com/archives/12686)
-
-<a href="http://jmnelectronics.com/archives/12217" target="_blank">Prueba</a>
+3.- [Construir un dispositivo Lora (3 de 3)](http://jmnelectronics.com/archives/12686 target="_blank")

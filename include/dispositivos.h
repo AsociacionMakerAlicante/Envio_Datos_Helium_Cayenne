@@ -1,6 +1,6 @@
 /*
-*Claves e identificadores de cada uni de los dispositivos que creamos en la red Helium.
-*DEVEUI APPEUI en LSB, APPKEY en MSB.
+*Claves e identificadores de cada uno de los dispositivos que creamos en la red Helium.
+*DEVEUI y APPEUI en LSB, APPKEY en MSB.
 */
 
 #ifndef DISPOSITIVOS_H

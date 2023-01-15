@@ -9,18 +9,25 @@
 #include <CayenneLPP.h>
 #include <lecturaDatos.h>
 
+#define NO_DEBUG
 unsigned long tiempo;
 int lectura, hora, minutos, segundos, milisegundos;
 volatile byte contador;
 volatile boolean envioEnCurso = true; // Hay un envío en curso, no poner el microcontrolador a dormir.
+enum dc
+{
+    temperatura_,
+    humedad_,
+    tiempo_,
+    voltaje_
+};
 
 // Tamaño de los datos enviados a Cayenne.
 // Cada sensor añade al payload 2 bytes + los bytes de sus datos.
-CayenneLPP lpp(4 + 4); // Térmometro + Lectura de batería
-
+CayenneLPP lpp(24); // Térmometro + Humedad + Lectura de batería + tiempo
+float datosCayenne[4];
 // Declaración de funciones.
 void wakeUp(void);
-void pulsador(void);
 void do_send(osjob_t *j);
 
 /*******************************************************
@@ -29,9 +36,10 @@ void do_send(osjob_t *j);
  *******************************************************/
 #if defined(DEBUG)
 // Si estamos en modo debug no deshabilitamos El pin con el led, A3 (para leer la tensión, ni RX2 y TX2 para comunicarnos con el PC)
-const uint8_t unusedPins[] = {PIN_A0, PIN_A3, PIN_A4, PIN_A5, PIN_A7, PIN_PA1, PIN_PA2, PIN_PA3};
+const uint8_t unusedPins[] = {PIN_A0, PIN_A3, PIN_A4, PIN_A5, PIN_A7, PIN_PA1};
 #else
-const uint8_t unusedPins[] = {PIN_A0, PIN_A3, PIN_A4, PIN_A5, PIN_A7, PIN_PA0, PIN_PA1, PIN_PA2, PIN_PA3, PIN_PF0, PIN_PF1};
+// const uint8_t unusedPins[] = {PIN_A0, PIN_A3, PIN_A4, PIN_A5, PIN_A7, PIN_PA0, PIN_PA1, PIN_PA2, PIN_PA3, PIN_PF0, PIN_PF1};
+const uint8_t unusedPins[] = {PIN_A0, PIN_A3, PIN_A4, PIN_A5, PIN_A7, PIN_PA0, PIN_PA1, PIN_PF0, PIN_PF1};
 #endif
 
 // ################# DATOS PLACA PARA CONEXIÓN CON HELIUM ##################
@@ -47,7 +55,6 @@ void os_getArtEui(u1_t *buf) { memcpy_P(buf, APPEUI, 8); }
 static const u1_t PROGMEM APPKEY[16] = {APPKEY_DISPOSITIVO_01};
 void os_getDevKey(u1_t *buf) { memcpy_P(buf, APPKEY, 16); }
 // ############################################################################
-
 
 static osjob_t sendjob;
 
@@ -211,19 +218,46 @@ void do_send(osjob_t *j)
         */
 
         // Lee la temperatura del termómetro TMP36
-
+        datosCayenne[dc::humedad_] = lecturaDatos(SHT21_Parametro::humedad);
+        datosCayenne[dc::temperatura_] = lecturaDatos(SHT21_Parametro::temperatura);
+        datosCayenne[dc::tiempo_] = millis() - tiempo;
+        datosCayenne[dc::voltaje_] = ADC_BateriaLeerVoltaje() / 1000.F;
         lpp.reset();
-        lpp.addAnalogInput(1, lecturaDatos());                       // Añadimos el sensor de temperatura.
-        lpp.addAnalogInput(2, ADC_BateriaLeerVoltaje() / 1000.F); // Batería en Voltios.
+        lpp.addAnalogInput(1, datosCayenne[dc::temperatura_]); // Añadimos el sensor de temperatura.
+        lpp.addAnalogInput(2, datosCayenne[dc::voltaje_]);     // Batería en Voltios.
+        lpp.addAnalogInput(3, datosCayenne[dc::humedad_]);     // Humedad.
+        lpp.addAnalogInput(4, datosCayenne[dc::tiempo_]);      // Tiempo despierto.
+        lpp.addAnalogInput(5, datosCayenne[dc::temperatura_]); // Temperatura (Gráfico líneas)
+        lpp.addAnalogInput(6, datosCayenne[dc::humedad_]);     // Humedad (Gráfico líneas)
+
         LMIC_setTxData2(1, lpp.getBuffer(), lpp.getSize(), 0);
 #if defined(DEBUG)
         Serial2.println(F("Paquete puesto en la cola para su envío"));
+        Serial2.print(F("Temperatura: "));
+        Serial2.println(lecturaDatos(SHT21_Parametro::temperatura));
+        Serial2.print(F("Humedad: "));
+        Serial2.println(lecturaDatos(SHT21_Parametro::humedad));
 #endif
     }
 }
 
 void setup()
 {
+    // LMIC init
+    os_init();
+
+    // Lanzamos una lectura para que se inicialice el SHT21
+    lecturaDatos(SHT21_Parametro::temperatura);
+    // Restablece el estado MAC. Se descartarán las transferencias de datos de sesión y pendientes.
+    LMIC_reset();
+
+#if defined(DEBUG)
+    Serial2.begin(115200);
+    Serial2.println("Iniciando");
+    Serial2.print(lecturaDatos(SHT21_Parametro::temperatura));
+    Serial2.print("/");
+    Serial2.println(lecturaDatos(SHT21_Parametro::humedad));
+#endif
     // Desactivamos los pines no usados para ahorrar bateria.
     for (uint8_t index = 0; index < sizeof(unusedPins); index++)
     {
@@ -237,17 +271,6 @@ void setup()
 #else
     attachInterrupt(digitalPinToInterrupt(TPL5010_WAKE), wakeUp, RISING);
 #endif
-
-#if defined(DEBUG)
-    Serial2.begin(115200);
-    Serial2.println(F("Iniciando"));
-#endif
-
-    // LMIC init
-    os_init();
-
-    // Restablece el estado MAC. Se descartarán las transferencias de datos de sesión y pendientes.
-    LMIC_reset();
 
     // allow much more clock error than the X/1000 default. See:
     // https://github.com/mcci-catena/arduino-lorawan/issues/74#issuecomment-462171974
@@ -271,11 +294,6 @@ void setup()
        Se puede utilizar como tensión de referencia 1.1V para aumentar la precisión de las
        medidas. El rango de temperaturas cubierto sería de -50 a 60.
     */
-    analogReference(INTERNAL1V5);
-
-    // Configuración de pines del TMP36.
-    pinMode(TMP36_POWER, OUTPUT);
-    pinMode(TMP36_DATA, INPUT);
 
     // Configuración pines de control del temporizador.
     pinMode(TPL5010_WAKE, INPUT);
@@ -293,6 +311,14 @@ void setup()
     digitalWrite(LED_BUILTIN, HIGH);
     delay(500);
     digitalWrite(LED_BUILTIN, LOW);
+#if defined(DEBUG)
+    Serial2.print(lecturaDatos(SHT21_Parametro::temperatura));
+    Serial2.print("/");
+    Serial2.println(lecturaDatos(SHT21_Parametro::humedad));
+#endif
+
+    // Actualizamos "tiempo" para controlar el tiempo que pasamos despiertos.
+    tiempo = millis();
 }
 
 void loop()
@@ -311,24 +337,8 @@ void loop()
         // serie, mirar si afecta al consumo de corriente cuando duerme.
         // comparar consumo con delay de 200
         LowPower.powerDown();
-// Se despierta aquí después de atender a la interrupción del timer.
-#if defined(DEBUG)
-        Serial2.println(F("Microcontrolador despierto"));
         tiempo = millis();
-        milisegundos = tiempo % 1000;
-        tiempo /= 1000;
-        segundos = tiempo % 60;
-        tiempo /= 60;
-        minutos = tiempo % 60;
-        tiempo /= 60;
-        hora = tiempo;
-
-        Serial2.print(++contador);
-        Serial2.print(" | ");
-        Serial2.printf("%02u:%02u:%02u.%03u", hora, minutos, segundos, milisegundos);
-        Serial2.print(" | ");
-        Serial2.println();
-#endif
+        // Se despierta aquí después de atender a la interrupción del timer.
     }
 }
 
@@ -360,4 +370,3 @@ void wakeUp(void)
         os_setCallback(&sendjob, do_send);
     }
 }
-

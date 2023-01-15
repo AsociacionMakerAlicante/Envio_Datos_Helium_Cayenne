@@ -1,35 +1,35 @@
 #include <Arduino.h>
 #include <config.h>
 #include <lecturaDatos.h>
+#include <SHT2x.h>
 
-// Datos conversor ADC
-const double tensionReferencia = 1.5, resolucionLectura = 1023;
-// Sensor de temperatura.
-double temperatura, lecturaTMP36, tension;
-unsigned long inicioCuentaAtras;      // Variable genérica para controlar tiempos en bucles.
+static SHT21 dispositivo;
+static bool iniciado;
+
+// Sensor de temperatura/humedad.
+float dato;
 
 // Lee la temperatura del termometro y la tensión de la bateria.
-double lecturaDatos()
+float lecturaDatos(byte parametro)
 {
-    // Encendemos el termómetro.
-    digitalWrite(TMP36_POWER, HIGH);
-
-    // Esperamos a que se complete el tiempo de encendido.
-    inicioCuentaAtras = millis();
-    while (millis() - inicioCuentaAtras < TMP36_TIEMPO_ENCENDIDO)
+	if(!iniciado){
+		dispositivo.begin();
+		dispositivo.read();
+		iniciado = true;
+	}
+    dispositivo.read();
+    switch (parametro)
     {
+    case SHT21_Parametro::temperatura:
+        dato = dispositivo.getTemperature();
+        break;
+
+    case SHT21_Parametro::humedad:
+        dato = dispositivo.getHumidity();
+        break;
+    default:
+        dato = 0;
+        break;
     }
-
-    // Una ve que ha pasado el tiempo de encendido leemos el valor.
-    lecturaTMP36 = analogRead(TMP36_DATA);
-
-    // Una vez leida la temperatura apagamos el termómetro.
-    digitalWrite(TMP36_POWER, LOW);
-
-    // Ahora convertimos la lectura a voltios.
-    tension = tensionReferencia * lecturaTMP36 / resolucionLectura;
-
-    // Ya tenemos la tensión, ahora la pasamos a grados.
-    temperatura = (tension - TMP36_V_A_0_GRADOS) * 100.0;
-	return temperatura;
+    return dato;
 }
